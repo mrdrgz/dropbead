@@ -201,82 +201,122 @@ setMethod("computeCellGeneFilteringFromBulk",
             })
 
 setGeneric("assignCellCyclePhases",
-           function(object, do.plot=T) {
+           function(object, gene.file="~/Desktop/things/git/dropseq/data/cell_cycle_genes.xlsx", do.plot=T, ...) {
              standardGeneric("assignCellCyclePhases")
            })
 setMethod("assignCellCyclePhases",
           "SingleSpeciesSample",
-          function(object, gene.file="~/Desktop/things/git/dropseq/data/cell_cycle_genes.xlsx", do.plot) {
+          function(object, gene.file, do.plot, cycleOrder=c("G1","G1.S","S","G2","G2.M","M")) {
             require(xlsx)
-            file.ext = gsub(".*\\.(.*)$","\\1", f)
+            require(plyr)
+            file.ext = gsub(".*\\.(.*)$","\\1", gene.file)
             
 			if (file.ext == "xlsx") {
 				if (object@species1 == "human") {
-					cc_genes <- read.xlsx("~/Desktop/things/git/dropseq/data/cell_cycle_genes.xlsx", sheetIndex = 2, stringsAsFactors = F)
+					cc_genes <- read.xlsx(gene.file, sheetIndex = 2, stringsAsFactors = F)
 				}
 
 				if (object@species1 == "mouse") {
-					cc_genes <- read.xlsx("~/Desktop/things/git/dropseq/data/cell_cycle_genes.xlsx", sheetIndex = 3, stringsAsFactors = F)
+					cc_genes <- read.xlsx(gene.file, sheetIndex = 3, stringsAsFactors = F)
 				}
 
 			} else if (file.ext == "csv") {
-			    cc_genes = read.file(gene.file, header=T, stringsAsFactors=F, sep=",")
+			    cc_genes = read.table(gene.file, header=T, stringsAsFactors=F, sep=",")
+				cc_genes$Phase = gsub("/", ".", cc_genes$Phase)
 		    }  
 
-            g.g1s <- gsub(" ", "", cc_genes$G1.S)
-            g.g1s <- g.g1s[!is.na(g.g1s)]
-            g.s <- gsub(" ", "", cc_genes$S)
-            g.s <- g.s[!is.na(g.s)]
-            g.g2m <- gsub(" ", "", cc_genes$G2.M)
-            g.g2m <- g.g2m[!is.na(g.g2m)]
-            g.m <- gsub(" ", "", cc_genes$M)
-            g.m <- g.m[!is.na(g.m)]
-            g.mg1 <- gsub(" ", "", cc_genes$M.G1)
-            g.mg1 <- g.mg1[!is.na(g.mg1)]
+			cc_genes$Symbol = gsub(" ", "", cc_genes$Symbol)
+			
+			ScorePhasesPerCell = function(dge, genes) {
+					return ( mean(log(dge[genes]+1, 2), na.rm=T) )
+			}
+			
+			ScorePhase = function(genes, dge=object@dge) {
+					return( apply(dge, 2, ScorePhasesPerCell, genes) )
+			}
+			
+			
+			# Use with/by to subset dynamically the gene symbols by phase, pass it to the 
+			# wrapper function ScorePhase (takes a DGE matrix and iterates cells) 
+			# and ScorePhasesPerCell (scores each cell and returns a vector to the wrapper
+			phase_score = do.call(cbind,with(cc_genes,by(Symbol,Phase,ScorePhase)))
+			phase_score = phase_score[,cycleOrder]
+			
+			# Normalize and reannotate rows
+            phase_score_norm <- data.frame(
+						apply(phase_score, 2, scale),row.names=rownames(phase_score)
+					)
+            
+            # Normalize 2 and reannotate columns
+            phase_score_norm2 <- setNames(
+					data.frame(t(apply(phase_score_norm, 1, scale))),
+					colnames(phase_score_norm)
+				)
+            
+            
+            
+            # Take the maximum and annotate the phase
+            phase_score_norm2$Phase = colnames(phase_score)[apply(phase_score_norm2, 1, which.max)]
 
-            phase_score = data.frame("G1.S"=rep(0, length(object@cells)),
-                                     "S"=rep(0, length(object@cells)),
-                                     "G2.M"=rep(0, length(object@cells)),
-                                     "M"=rep(0, length(object@cells)),
-                                     "M.G1"=rep(0, length(object@cells)))
+			# Order columns using a reference column i
+			# Then, rearrange the rest to get -x,-x around column i
+			# including columns
+			OrderColumns = function(i,v) {
+					# v with columns
+					# i == reference column
+					c.i = which(v == i)
+					c.o = c(c.i)
+					# Number of iterations (floor)
+ 					n.it = floor((length(v) - 1)/2)
+ 					for (it in seq(1,n.it,1))
+ 					{	c.o = c(c.o,
+								ifelse(c.i - it < 1, length(v)+(c.i-it), c.i-it),
+								ifelse(c.i + it > length(v), length(v) - c.i+it, c.i+it)
+							)
+ 					}
+ 					
+ 					# If the length is uneven, add last value to the vector
+ 					if ( (length(v)-1) %% 2 == 1 ) {
+						it = n.it + 1
+						c.o = c(c.o,
+							ifelse(c.i - it < 1, length(v)+(c.i-it), c.i-it)
+							)
+					}
+						return(c.o)
+			}
+				
+			
+			RoundAndOrder = function(i,df) {
+ 					# Subset by Phase
+ 					df=phase_score_norm2
+ 					df <- df[df$Phase == i,grep("Phase", colnames(df), invert=T)]
+ 					
+ 					# Order and round values for the column i
+ 					df <- round(df[order(df[[ i ]], decreasing = T), ], 2)
+ 					
+ 					# Create rearrenged column vector		
+ 					column.order = colnames(df)[OrderColumns(i,colnames(df))]
+					
+ 					# Order df
+ 					df = df[do.call("order", c(df[,column.order], decreasing=T)), ]
+ 					df$Phase = i
+					return( df )
+			}
+			
+			
+			phase_score_norm2 = do.call(rbind, lapply(colnames(phase_score_norm2)[seq(1,length(phase_score_norm2)-1,1)],
+				   RoundAndOrder, df=phase_score_norm2)
+			)
 
-            for (i in 1:length(object@cells)) {
-              phase_score$G1.S[i] = mean(log(object@dge[g.g1s, i]+1, 2), na.rm=T)
-              phase_score$S[i] = mean(log(object@dge[g.s, i]+1, 2), na.rm=T)
-              phase_score$G2.M[i] = mean(log(object@dge[g.g2m, i]+1, 2), na.rm=T)
-              phase_score$M[i] = mean(log(object@dge[g.m, i]+1, 2), na.rm=T)
-              phase_score$M.G1[i] = mean(log(object@dge[g.mg1, i]+1, 2), na.rm=T)
-            }
-
-            phase_score_norm <- data.frame(apply(phase_score, 2, scale))
-            phase_score_norm2 <- data.frame(t(apply(phase_score_norm, 1, scale)))
-            names(phase_score_norm2) <- names(phase_score_norm)
-            phases <- apply(phase_score_norm2, 1, which.max)
-
-            df1 <- phase_score_norm2[phases == 1, ]
-            df1 <- round(df1[order(df1$G1.S, decreasing = T), ], 2)
-            df1 <- df1[order(df1$G1.S, df1$S, df1$G2.M, df1$M, df1$M.G1, decreasing = T), ]
-
-            df2 <- phase_score_norm2[phases == 2, ]
-            df2 <- round(df2[order(df2$S, decreasing = T), ], 2)
-            df2 <- df2[order(df2$S, df2$G1.S, df2$G2.M, df2$M, df2$M.G1, decreasing = T), ]
-
-            df3 <- phase_score_norm2[phases == 3, ]
-            df3 <- round(df3[order(df3$G2.M, decreasing = T), ], 2)
-            df3 <- df3[order(df3$G2.M,  df3$M, df3$S, df3$M.G1, df3$G1.S, decreasing = T), ]
-
-            df4 <- phase_score_norm2[phases == 4, ]
-            df4 <- round(df4[order(df4$M, decreasing = T), ], 2)
-            df4 <- df4[order(df4$M, df4$M.G1, df4$G2.M, df4$S, df4$G1.S, decreasing = T), ]
-
-            df5 <- phase_score_norm2[phases == 5, ]
-            df5 <- round(df5[order(df5$M.G1, decreasing = T), ], 2)
-            df5 <- df5[order(df5$M.G1, df5$G1.S, df5$G2.M, df5$S, df5$M,  decreasing = T), ]
 
             heatmap_palette <- colorRampPalette(c("#3794bf", "#FFFFFF", "#cc4140"))
             if (do.plot) {
-              heatmap.2(as.matrix(t(rbind(df1, df2, df3, df4, df5))), trace='none', Rowv=F, Colv=F, dendrogram='none', labCol=F, col=heatmap_palette(10))
+              heatmap.2(as.matrix(t(phase_score_norm2[,seq(1, ncol(phase_score_norm2)-1,1)])), 	
+						trace='none', Rowv=F, Colv=F, dendrogram='none', 
+						labCol=F, col=heatmap_palette(10))
             }
 
-            return(rbind(df1, df2, df3, df4, df5))
+#             return()
+			  return(list(Scaled=phase_score_norm2,
+						  Raw=phase_score))
           })
