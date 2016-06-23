@@ -223,7 +223,7 @@ setMethod("assignCellCyclePhases",
 			} else if (file.ext == "csv") {
 			    cc_genes = read.table(gene.file, header=T, stringsAsFactors=F, sep=",")
 				cc_genes$Phase = gsub("/", ".", cc_genes$Phase)
-		    }  
+            }  
 
 			cc_genes$Symbol = gsub(" ", "", cc_genes$Symbol)
 			
