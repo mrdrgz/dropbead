@@ -8,7 +8,7 @@ Maintainer: Nikolaos Karaiskos <nikolaos.karaiskos@mdc-berlin.de>
 Depends: ggplot2, grid, RColorBrewer, gridExtra, gplots, plyr
 Description: Basic Exploration and Analysis of Drop-seq Data
 License: GNU GPL3
-Collate: Tools.R DGEMatrix.R SingleSpeciesSample.R MixedSpeciesSample.R plottingMethods.R
+Collate: Tools.R DGEMatrix.R SingleSpeciesSample.R MixedSpeciesSample.R plottingMethods.R MixedSpeciesLabelledSample.R
 LazyData: TRUE
 NeedsCompilation: no
 Packaged: 2015-11-14 09:59:18 UTC; root
